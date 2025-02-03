@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subtitle Player</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+    <script> 
+        localforage.config({
+            driver: localforage.INDEXEDDB, 
+            name: 'SubtitlesPlayerAppCache',
+            version: 1.0,
+            storeName: 'cache',
+            description: 'SubtitlesPlayer Cache'
+        }); 
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="flex justify-center items-center h-screen bg-black">
+
+<div id="container" class="relative w-full h-full">
+    <iframe scrolling="auto" frameborder="0" marginheight="0" marginwidth="0" allowfullscreen webkitallowfullscreen mozallowfullscreen id="video-frame" class="w-full h-full"></iframe>
+
+    <div id="error-message" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-red-600 text-xl">
+        VIDEO NOT FOUND!
+    </div>
+
+    <button id="cc-button" class="absolute bottom-5 left-5 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors">
+        CC
+    </button>
+
+    <select id="subtitle-dropdown" class="hidden absolute bottom-20 left-5 bg-gray-800 text-white py-2 px-4 rounded-md">
+    </select>
+</div>
+
+<script>
+const urlParams = new URLSearchParams(window.location.search);
+
+const videoUrl = urlParams.get('url');
+
+if (videoUrl) {
+    const iframe = document.getElementById('video-frame');
+    iframe.src = videoUrl;
+} else {
+    console.error("No 'url' parameter found in the URL.");
+    const errorMessage = document.getElementById('error-message');
+    errorMessage.style.display = 'block';
+    const iframe = document.getElementById('video-frame');
+    iframe.style.display = 'none';
+}
+
+async function getImdbIdFromTmdb(tmdbId, season = null, episode = null) {
+    const tmdbApiKey = '05902896074695709d7763505bb88b4d';
+    let tmdbApiUrl;
+
+    if (season !== null && episode !== null) {
+        tmdbApiUrl = `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${tmdbApiKey}&append_to_response=external_ids`;
+    } else {
+        tmdbApiUrl = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${tmdbApiKey}&append_to_response=external_ids`;
+    }
+
+    const cacheKey = `imdb_id_${tmdbId}_${season}_${episode}`;
+    let imdbId = await localforage.getItem(cacheKey);
+
+    if (imdbId !== null) {
+        //console.log('Using cached IMDb ID:', imdbId);
+        return imdbId;
+    }
+
+    try {
+        const response = await fetch(tmdbApiUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch from TMDb: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+       //console.log('TMDb Response Data:', data);
+
+        imdbId = data.external_ids ? data.external_ids.imdb_id : null;
+
+        if (!imdbId) {
+            console.error('IMDb ID is not available in the TMDb response.');
+            return null;
+        }
+
+        imdbId = imdbId.replace('tt', '');
+
+        await localforage.setItem(cacheKey, imdbId);
+        //console.log('Cached IMDb ID:', imdbId);
+
+        return imdbId;
+    } catch (error) {
+        console.error('Error fetching IMDb ID from TMDb:', error);
+        return null;
+    }
+}
+
+async function fetchAndDisplaySubtitles() {
+    const urlParams = new URLSearchParams(window.location.search);
+    let imdbid = urlParams.get('imdb');
+    const tmdbid = urlParams.get('tmdb');
+    const season = urlParams.get('season');
+    const episode = urlParams.get('episode');
+    const language = urlParams.get('language') || '';
+
+    if (tmdbid) {
+        imdbid = await getImdbIdFromTmdb(tmdbid, season, episode);
+        //console.log('Fetched IMDb ID from TMDb:', imdbid);
+    }
+
+	if (imdbid) {
+    imdbid = imdbid.replace(/^tt/, ''); 
+    }
+
+    if (!imdbid) {
+        //console.error('IMDb ID is not available.');
+        return;
+    }
+
+    const subtitles = await fetchAllSubtitles(imdbid, language, season, episode);
+    //console.log('Fetched Subtitles:', subtitles);
+
+    if (subtitles.length > 0) {
+        const dropdown = document.getElementById('subtitle-dropdown');
+        dropdown.innerHTML = '';
+
+        subtitles.forEach(subtitle => {
+            const option = document.createElement('option');
+            option.value = subtitle.url;
+            option.text = `${subtitle.languageName} - ${subtitle.movieReleaseName}`;
+            dropdown.appendChild(option);
+        });
+
+    } else {
+        console.log('No subtitles found for provided ID:', imdbid);
+    }
+}
+
+const dropdown = document.getElementById('subtitle-dropdown');
+
+const ccButton = document.getElementById('cc-button');
+ccButton.addEventListener('click', function() {
+    if (dropdown.style.display === 'block') {
+        dropdown.style.display = 'none';
+    } else {
+        dropdown.style.display = 'block';
+        if (dropdown.options.length === 0) {
+            fetchAndDisplaySubtitles();
+        }
+    }
+});
+
+dropdown.addEventListener('change', async function () {
+    const iframe = document.getElementById('video-frame');
+    const subtitleUrl = this.value;
+    const dropdownText = this.options[this.selectedIndex].text;
+    const subtitleFileName = `${dropdownText}.srt`;
+    const subtitleFolderUrl = `${window.location.origin}/SubtitlePlayer/subtitles/${subtitleFileName}`;
+
+    try {
+        const headResponse = await fetch(subtitleFolderUrl, { method: 'HEAD' });
+
+        if (headResponse.status === 200) {
+            //console.log('Subtitle already exists:', subtitleFolderUrl);
+            const baseIframeUrl = iframe.src.split('?')[0];
+            iframe.src = `${baseIframeUrl}?caption_1=${subtitleFolderUrl}&sub_1=CC`;
+        } else if (headResponse.status === 404) {
+            //console.log('Subtitle file does not exist locally, downloading...');
+            const response = await fetch(subtitleUrl);
+            if (!response.ok) {
+                throw new Error('Failed to download subtitle file');
+            }
+
+            const blob = await response.blob();
+            const formData = new FormData();
+            formData.append('file', blob, subtitleFileName);
+			
+            const uploadResponse = await fetch('get_subs.php', {
+            method: 'POST',
+            body: formData
+            });
+
+            if (!uploadResponse.ok) {
+                throw new Error('Failed to upload subtitle file');
+            }
+
+            const uploadData = await uploadResponse.json();
+            if (uploadData.error) {
+                console.error('Error from server:', uploadData.error);
+            } else {
+                const serverSubtitleUrl = uploadData.path;
+                const fullSubtitleUrl = `${window.location.origin}/SubtitlePlayer${serverSubtitleUrl}`;
+                const baseIframeUrl = iframe.src.split('?')[0];
+                iframe.src = `${baseIframeUrl}?caption_1=${fullSubtitleUrl}&sub_1=CC`;
+
+                //console.log('Subtitle successfully uploaded and applied:', fullSubtitleUrl);
+            }
+        } else {
+            console.error('Unexpected response:', headResponse.status);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+		alert('An error occurred while handling subtitles. Please try again.');
+    }
+
+    dropdown.style.display = 'none';
+});
+
+async function fetchAllSubtitles(imdbid, languages, season = null, episode = null) {
+    const websiteUrl = window.location.origin;
+    //const baseUrl = `https://corsproxy.io/?https://rest.opensubtitles.org/search`;
+    const baseUrl = `${websiteUrl}/SubtitlePlayer/proxy.php?url=https://rest.opensubtitles.org/search`;
+    let subtitles = [];
+
+    const languageList = languages.split(',');
+
+    for (const language of languageList) {
+        let apiUrl;
+
+        if (season !== null && episode !== null) {
+            apiUrl = `${baseUrl}/episode-${episode}/imdbid-${imdbid}/season-${season}/sublanguageid-${language.trim()}`;
+        } else {
+            apiUrl = `${baseUrl}/imdbid-${imdbid}/sublanguageid-${language.trim()}`;
+        }
+
+        try {
+		   //const os_api = 'trailers.to-UA';
+           //const headers = {
+            //"authority": "rest.opensubtitles.org",
+            //"x-user-agent": os_api,
+           //};
+		   
+			//const response = await fetch(apiUrl, {
+            //headers: headers
+            //})
+			const response = await fetch(apiUrl);
+			
+            if (!response.ok) {
+                console.error('Network response was not ok:', response.status, response.statusText);
+                continue;
+            }
+
+            const data = await response.json();
+
+            const filteredSubtitles = data
+                .filter(subtitle => subtitle.SubFormat && subtitle.SubFormat.toLowerCase() === 'srt' && Number(subtitle.SubSumCD) === 1)
+                .map(subtitle => {
+                    let downloadUrl = subtitle.SubDownloadLink.replace('download/', 'download/subencoding-utf8/').replace('.gz', '');
+                    return {
+                        url: downloadUrl,
+                        languageName: subtitle.LanguageName,
+                        movieReleaseName: subtitle.MovieReleaseName
+                    };
+                });
+
+            subtitles = subtitles.concat(filteredSubtitles);
+
+        } catch (error) {
+            console.error(`Failed to fetch subtitles for language ${language}:`, error);
+            //alert('Failed to fetch subtitles: ' + error.message);
+        }
+    }
+
+    return subtitles;
+}
+</script>
+</body>
+</html>
