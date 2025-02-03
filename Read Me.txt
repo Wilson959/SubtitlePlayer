@@ -1,1 +1,3 @@
 enter your website url inside url.php
+usage example
+for streamwish & vidhide /SubtitlePlayer/player2.html?imdb=tt6263850&url=https://vidhidepro.com/embed/xja9c7xjztwh&language=eng,hrv,bos,scc replace imdb= with tmdb= for episodes add &season &episode to url for other hosts use /SubtitlePlayer/player1.html?imdb=tt6263850&url=&language=eng,fre,ger add embed video to url
