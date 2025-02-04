@@ -1,0 +1,9 @@
+<IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header set Access-Control-Allow-Headers "Content-Type"
+    <FilesMatch "\.(php|php5|phtml)$">
+    deny from all
+    </FilesMatch>
+    ErrorDocument 404 /404.html
+</IfModule>
